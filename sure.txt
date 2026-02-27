@@ -1,0 +1,425 @@
+ import casadi.*
+
+veh = veh_params();
+
+%% Vehicle Model - state variables
+
+nx = 11; % number of state variables
+
+% longitudinal velocity [m/s]
+V_n = SX.sym('v_n');
+V_s = 100;
+V = V_s * V_n;
+
+% sideslip angle [rad]
+beta_n = SX.sym('beta_n');
+beta_s = 1;
+beta = beta_s * beta_n;
+
+% yaw rate [rad/s]
+gamma_n = SX.sym('gamma_n');
+gamma_s = 1;
+gamma = gamma_s * gamma_n;
+
+% lateral distance to centreline [m] - left of centreline => n > 0; right => n < 0
+n_n = SX.sym('n_n');
+n_s = 5;
+n = n_s * n_n;
+
+% course angle to centreline tangent direction [rad]
+xi_n = SX.sym('xi_n');
+xi_s = 1;
+xi = xi_s * xi_n;
+
+ax_bar_n = SX.sym('ax_bar_n');
+ax_bar_s = 2*9.8;
+ax_bar = ax_bar_s * ax_bar_n;
+
+ay_bar_n = SX.sym('ay_bar_n');
+ay_bar_s = 2*9.8;
+ay_bar = ay_bar_s * ay_bar_n;
+
+omega_s = V_s/veh.rw;
+
+% angular velocity front left tyre [rad/s]
+omega_fl_n = SX.sym('omega_fl_n');
+omega_fl = omega_s * omega_fl_n;
+
+% angular velocity front right tyre [rad/s]
+omega_fr_n = SX.sym('omega_fr_n');
+omega_fr = omega_s * omega_fr_n;
+
+% angular velocity rear left tyre [rad/s]
+omega_rl_n = SX.sym('omega_rl_n');
+omega_rl = omega_s * omega_rl_n;
+
+% angular velocity rear right tyre [rad/s]
+omega_rr_n = SX.sym('omega_rr_n');
+omega_rr = omega_s * omega_rr_n;
+
+% states vector (scaled)
+x = [V_n beta_n gamma_n n_n xi_n ax_bar_n ay_bar_n omega_fl_n omega_fr_n omega_rl_n omega_rr_n]';
+
+% scaling factors
+x_s = [V_s beta_s gamma_s n_s xi_s ax_bar_s ay_bar_s omega_s omega_s omega_s omega_s]';
+
+% state limits
+omega_max = veh.V_max/veh.rw; 
+x_min = [    -1e-3; -pi/4; -pi/2; -4; -pi/4;     -2*9.8;    -2*9.8;    0;     0;     0;     0]./x_s;
+x_max = [veh.V_max;  pi/4;  pi/2;  4;  pi/4;      2*9.8;     2*9.8;    omega_max; omega_max; omega_max; omega_max]./x_s;
+
+
+%% Vehicle model - control variables (inputs)
+
+nu = 3; % number of control variables
+
+% driving torque (Nm)
+Tt_n = SX.sym('Tt_n');
+Tt_s = 2e3;
+Tt = Tt_s * Tt_n;
+
+% braking torque [Nm]
+Tb_n = SX.sym('Tb_n');
+Tb_s = 4e3;
+Tb = Tb_s * Tb_n;
+
+% steer angle [rad]
+delta_n = SX.sym('delta_n');
+delta_s = pi/8;
+delta = delta_s * delta_n;
+
+% inputs vector (scaled)
+u = [Tt_n Tb_n delta_n]'; 
+
+% scaling factors for inputs
+u_s = [Tt_s Tb_s delta_s]'; 
+
+% input limits
+u_min = [veh.Tt_min veh.Tb_min veh.delta_min]'./u_s;
+u_max = [veh.Tt_max veh.Tb_max veh.delta_max]'./u_s;
+
+%Constraints on the rate of inputs (units of each input per second)
+duk_lb = [veh.Tt_dot_min veh.Tb_dot_min veh.delta_dot_min]'./u_s; %lower bound
+duk_ub = [veh.Tt_dot_max veh.Tb_dot_max veh.delta_dot_max]'./u_s; %upper bound
+% duk_ub = [ 1e4;  1e4;  1]./u_s; %upper bound
+% duk_lb = [-1e4; -1e4; -1]./u_s; %lower bound
+
+% Regularisation factors
+rdu = [1; 1; 10]; % 
+rdy = [1; 1]; % first derivatives of the aux variables
+% rdy = [0.1; 0.1]; % first derivatives of the aux variables
+% rdu2 = [0.01; 0.01; 1]; % second derivatives of the inputs
+% rdy2 = [0.015; 0.015]; % second derivatives of the aux variables
+
+
+
+
+% nu = 2; % number of control variables
+% 
+% % mono pedal position [-]
+% u_pedal = SX.sym('u_pedal');
+% rou_smooth = 1e-1; offset = 0.00318298 + 0.0285425 + 3.74306e-8;
+% % rou_smooth = 1e-2; offset = 0.00318298;
+% % rou_smooth = 1e-3; offset = 0.00318298-0.00286467;
+% % rou_smooth = 1e-4; offset = 0.00318298-0.00286467-0.000286479;
+% 
+% % driving torque (Nm)
+% Tt_s = 2e3;
+% Tt = Tt_s * ( (0 + u_pedal) * ( atan2(0 + u_pedal, rou_smooth)/pi + 1/2 ) + offset );
+% 
+% % braking torque (Nm)
+% Tb_s = (-1)*4e3;
+% Tb = Tb_s * ( (0 - u_pedal) * ( atan2(0 - u_pedal, rou_smooth)/pi + 1/2 ) + offset );
+% 
+% % steer angle [rad]
+% delta_n = SX.sym('delta_n');
+% delta_s = pi/8;
+% delta = delta_s * delta_n;
+% 
+% % inputs vector (scaled)
+% u = [u_pedal delta_n]'; 
+% 
+% % scaling factors for inputs
+% u_s = [1 delta_s]'; 
+% 
+% % input limits
+% u_min = [-1 veh.delta_min]'./u_s;
+% u_max = [ 1 veh.delta_max]'./u_s;
+% 
+% %Constraints on the rate of inputs (units of each input per second)
+% duk_lb = [-100 veh.delta_dot_min]'./u_s; %lower bound
+% duk_ub = [ 100 veh.delta_dot_max]'./u_s; %upper bound
+% % duk_ub = [ 1e4;  1e4;  1]./u_s; %upper bound
+% % duk_lb = [-1e4; -1e4; -1]./u_s; %lower bound
+% 
+% % Regularisation factors
+% % rdu = [1; 1; 10]; % 
+% rdu = [1; 10]; % 
+% rdy = [1; 1]; % first derivatives of the aux variables
+% % rdy = [0.1; 0.1]; % first derivatives of the aux variables
+% % rdu2 = [0.01; 0.01; 1]; % second derivatives of the inputs
+% % rdy2 = [0.015; 0.015]; % second derivatives of the aux variables
+
+%% Vehicle model - additional variables
+
+nz = 0; % Number of aux variables
+
+%% Vechicle model - parameter variables
+%Symbolic variables that are not decision variables of the NLP - defined as such because their value changes (it is like a variable value parameter)
+
+kappa = SX.sym('kappa'); % kappa > 0 for left turns
+
+pv = kappa; % collect variable parameters
+
+%% Vehicle model - equations
+%Calculate variables of the system other than the states and inputs
+
+cosd = cos(delta);
+sind = sin(delta);
+cosb = cos(beta);
+sinb = sin(beta);
+cosbd = cos(beta-delta);
+sinbd = sin(beta-delta);
+
+% longitudinal and lateral velocities
+vx = V*cosb;
+vy = V*sinb;
+
+% Resistance forces
+%-aerodynamic forces [N]
+f_drag = 0.5*veh.drag_coeff*vx^2;
+f_lift = 0.5*veh.lift_coeff*vx^2;
+
+% Tire velocities
+vxfl = (vx-0.5*veh.wt*gamma)*cosd + (vy+veh.lf*gamma)*sind + 1e-12;
+vxfr = (vx+0.5*veh.wt*gamma)*cosd + (vy+veh.lf*gamma)*sind + 1e-12;
+vxrl = (vx-0.5*veh.wt*gamma) + 1e-12;
+vxrr = (vx+0.5*veh.wt*gamma) + 1e-12;
+
+vyfl = (vy+veh.lf*gamma)*cosd - (vx-0.5*veh.wt*gamma)*sind;
+vyfr = (vy+veh.lf*gamma)*cosd - (vx+0.5*veh.wt*gamma)*sind;
+vyrl = (vy-veh.lr*gamma);
+vyrr = (vy-veh.lr*gamma);
+
+% vertical tyre forces [N]
+t1 = veh.g*veh.lr/veh.l - ax_bar*veh.hc/veh.l;
+t2 = veh.g*veh.lf/veh.l + ax_bar*veh.hc/veh.l;
+t3 = veh.hc*ay_bar/veh.wt/veh.g;
+
+fzfl = 0.5*veh.m*t1 - veh.m*t1*t3 - f_lift/4;
+fzfr = 0.5*veh.m*t1 + veh.m*t1*t3 - f_lift/4;
+fzrl = 0.5*veh.m*t2 - veh.m*t2*t3 - f_lift/4;
+fzrr = 0.5*veh.m*t2 + veh.m*t2*t3 - f_lift/4;
+
+fzf = fzfl + fzfr;
+fzr = fzrl + fzrr;
+
+% Tire longitudinal slips
+SXfl = (veh.rw*omega_fl-vxfl)/vxfl;
+SXfr = (veh.rw*omega_fr-vxfr)/vxfr;
+SXrl = (veh.rw*omega_rl-vxrl)/vxrl;
+SXrr = (veh.rw*omega_rr-vxrr)/vxrr;
+
+% Tire lateral slips
+syfl = atan(vyfl/vxfl);
+syfr = atan(vyfr/vxfr);
+syrl = atan(vyrl/vxrl);
+syrr = atan(vyrr/vxrr);
+
+tan_syfl = vyfl/vxfl;
+tan_syfr = vyfr/vxfr;
+tan_syrl = vyrl/vxrl;
+tan_syrr = vyrr/vxrr;
+
+% sfl = (SXfl^2+tan_syfl^2).^0.5 + 1e-12;
+% sfr = (SXfr^2+tan_syfr^2).^0.5 + 1e-12;
+% srl = (SXrl^2+tan_syrl^2).^0.5 + 1e-12;
+% srr = (SXrr^2+tan_syrr^2).^0.5 + 1e-12;
+% 
+% fxfl = (SXfl/sfl)*MF_Fx(veh,sfl,fzfl);
+% fxfr = (SXfr/sfr)*MF_Fx(veh,sfr,fzfr);
+% fxrl = (SXrl/srl)*MF_Fx(veh,srl,fzrl);
+% fxrr = (SXrr/srr)*MF_Fx(veh,srr,fzrr);
+% 
+% fyfl = (tan_syfl/sfl)*MF_Fy(veh,sfl,fzfl);
+% fyfr = (tan_syfr/sfr)*MF_Fy(veh,sfr,fzfr);
+% fyrl = (tan_syrl/srl)*MF_Fy(veh,srl,fzrl);
+% fyrr = (tan_syrr/srr)*MF_Fy(veh,srr,fzrr);
+
+[fxfl, fyfl, mufl_ratio] = tire_force_tanEllipse(veh, SXfl, tan_syfl, fzfl);
+[fxfr, fyfr, mufr_ratio] = tire_force_tanEllipse(veh, SXfr, tan_syfr, fzfr);
+[fxrl, fyrl, murl_ratio] = tire_force_tanEllipse(veh, SXrl, tan_syrl, fzrl);
+[fxrr, fyrr, murr_ratio] = tire_force_tanEllipse(veh, SXrr, tan_syrr, fzrr);
+
+fxf = fxfl + fxfr;  fxr = fxrl + fxrr;
+fyf = fyfl + fyfr;  fyr = fyrl + fyrr;
+
+% optional monitoring
+mufl = mufl_ratio; mufr = mufr_ratio; murl = murl_ratio; murr = murr_ratio;
+
+% mufl = (fxfl^2+fyfl^2)^(0.5)/fzfl;
+% mufr = (fxfr^2+fyfr^2)^(0.5)/fzfr;
+% murl = (fxrl^2+fyrl^2)^(0.5)/fzrl;
+% murr = (fxrr^2+fyrr^2)^(0.5)/fzrr;
+
+% Wheel torque
+dfzf = 0.5*(fzfr-fzfl);
+dfzr = 0.5*(fzrr-fzrl);
+
+% kb = fzf/(veh.m*veh.g);
+kb = 0.6;
+Tf = kb*Tb;
+Tfl = 0.5*Tf*(1-dfzf/fzf);
+Tfr = 0.5*Tf*(1+dfzf/fzf);
+
+Tr = Tt + (1-kb)*Tb;
+Trl = 0.5*Tr*(1-dfzr/fzr);
+Trr = 0.5*Tr*(1+dfzr/fzr);
+
+
+%% Vehicle model - state derivatives
+% Define derivatives of the state-space model
+
+Fx = fxf*cosd + fxr - fyf*sind - f_drag;
+Fy = fyf*cosd + fyr + fxf*sind;
+ax = Fx/veh.m;
+ay = Fy/veh.m;
+
+Mz = veh.lf*(fyf*cosd+fxf*sind) - veh.lr*fyr + 0.5*veh.wt*((fxfr-fxfl)*cosd+(fyfl-fyfr)*sind) + 0.5*veh.wt*(fxrr-fxrl);
+
+Ft = fxf*cosbd + fxr*cosb + fyf*sinbd + fyr*sinb - f_drag*cosb;
+Fn = fyf*cosbd + fyr*cosb - fxf*sinbd - fxr*sinb + f_drag*sinb;
+
+% Change of independent variable
+chi = xi+beta;
+% sf = (1-n*kappa)/(V*cos(chi));
+sf = (1-n*kappa)/(V*cos(chi) + 1e-12) + 1e-12;
+
+xdot = [
+    Ft/veh.m;
+    Fn/(V*veh.m)-gamma;
+    Mz/veh.Iz;
+    V*sin(chi);
+    gamma - kappa/sf;
+    -(ax - ax_bar) / 0.2;
+    -(ay - ay_bar) / 0.2;
+    (Tfl-fxfl*veh.rw)/veh.Iw;
+    (Tfr-fxfr*veh.rw)/veh.Iw;
+    (Trl-fxrl*veh.rw)/veh.Iw;
+    (Trr-fxrr*veh.rw)/veh.Iw;
+    ]./x_s;
+
+dx = sf*xdot;
+
+%-Collect output variables
+y_aero = [f_drag; f_lift];
+y_tyre = [fxfl; fxfr; fxrl; fxrr; fyfl; fyfr; fyrl; fyrr; fzfl; fzfr; fzrl; fzrr];
+y_slip = [SXfl; SXfr; SXrl; SXrr; syfl; syfr; syrl; syrr];
+y_acc = [ax; ay];
+y_torque = [Tfl; Tfr; Trl; Trr];
+y_mu = [mufl; mufr; murl; murr];
+y_pwr = [Tfl*omega_fl; Tfr*omega_fr; Trl*omega_rl; Trr*omega_rr];
+y_xdot = xdot;
+
+% function Fx = MF_Fx(veh,lambda,Fz)
+% Fx = (veh.d1x*Fz+veh.d2x)*sin(veh.Cx*atan(veh.Bx*lambda));
+% end
+% 
+% function Fy = MF_Fy(veh,alpha,Fz)
+% Fy = -(veh.d1y*Fz+veh.d2y)*sin(veh.Cy*atan(veh.By*alpha));
+% end
+
+
+
+
+
+function [Fx, Fy, mu_ratio] = tire_force_tanEllipse(veh, kappa, tan_alpha, Fz)
+
+% kappa     = longitudinal slip ratio lambda = (rw*omega - Vx)/Vx
+% tan_alpha = lateral slip ratio = Vy/Vx = tan(slip_angle)
+% Fz        = vertical load (N)
+%
+% This embeds an “ellipse-like” saturation into the tire model, so you
+% don’t need separate friction-ellipse path constraints.
+
+% % ---- tunable parameters (keep from Another tyre model) ----
+% Fz1 = 2000;   % N
+% Fz2 = 6000;   % N
+% Qx  = 1.9;
+% Qy  = 1.9;
+% eps1 = 1e-2;  % like rou_correction1
+% eps2 = 1e-5;  % like rou_correction2
+% 
+% % ---- mu_max: choose ONE option ----
+% % % Option A (your stated preference: mu = 1 assumptions)
+% % mu_x_max1 = veh.mux;  mu_x_max2 = veh.mux;
+% % mu_y_max1 = veh.muy;  mu_y_max2 = veh.muy;
+% 
+% % Option B (if you ever want consistency with your MF peak factors):
+% mu_x_max1 = (veh.d1x*Fz1 + veh.d2x)/Fz1;  mu_x_max2 = (veh.d1x*Fz2 + veh.d2x)/Fz2;
+% mu_y_max1 = (veh.d1y*Fz1 + veh.d2y)/Fz1;  mu_y_max2 = (veh.d1y*Fz2 + veh.d2y)/Fz2;
+% 
+% % ---- k_max and alpha_max from your MF shape params ----
+% k_max = tan(pi/(2*veh.Cx))/veh.Bx;           % dimensionless
+% alpha_peak = tan(pi/(2*veh.Cy))/veh.By;      % radians
+% tan_alpha_max = tan(alpha_peak);             % dimensionless
+% 
+% % Optional load interpolation hooks (keep constant unless you want load-dependence):
+% mu_x_max = (Fz - Fz1) * (mu_x_max2 - mu_x_max1) / (Fz2 - Fz1) + mu_x_max1;
+% mu_y_max = (Fz - Fz1) * (mu_y_max2 - mu_y_max1) / (Fz2 - Fz1) + mu_y_max1;
+% 
+% % ---- normalized combined slip radius (use tan(alpha), consistent with your newest code) ----
+% k_n = kappa / k_max;
+% 
+% % Sign: your MF Fy0 has a leading minus sign (paper Eq.42), so we want Fy ~ -tan(alpha)
+% a_n = (-tan_alpha) / tan_alpha_max;
+% 
+% % rou = (k_n.^2 + a_n.^2 + eps1^2).^0.5 + eps2;
+% rou = (k_n.^2 + a_n.^2 + eps1^2).^0.5;
+% 
+% Sx = pi/(2*atan(Qx));
+% Sy = pi/(2*atan(Qy));
+% 
+% Fx = mu_x_max .* Fz .* sin(Qx * atan(Sx * rou)) .* (k_n ./ rou);
+% Fy = mu_y_max .* Fz .* sin(Qy * atan(Sy * rou)) .* (a_n ./ rou);
+
+
+
+
+
+Fz1 = 2000;   % N
+Fz2 = 6000;   % N
+Qx  = 1.35;
+Qy  = 1.5;
+eps1 = 1e-5;
+eps2 = 1e-5;
+
+% Option B (active in your file):
+mu_x_max1 = (veh.d1x*Fz1 + veh.d2x)/Fz1;  mu_x_max2 = (veh.d1x*Fz2 + veh.d2x)/Fz2;
+mu_y_max1 = (veh.d1y*Fz1 + veh.d2y)/Fz1;  mu_y_max2 = (veh.d1y*Fz2 + veh.d2y)/Fz2;
+
+k_max = tan(pi/(2*veh.Cx))/veh.Bx;
+alpha_peak = tan(pi/(2*veh.Cy))/veh.By;
+tan_alpha_max = tan(alpha_peak);
+
+mu_x_max = (Fz - Fz1) * (mu_x_max2 - mu_x_max1) / (Fz2 - Fz1) + mu_x_max1;
+mu_y_max = (Fz - Fz1) * (mu_y_max2 - mu_y_max1) / (Fz2 - Fz1) + mu_y_max1;
+
+k_n = kappa / k_max;
+a_n = (-tan_alpha) / tan_alpha_max;
+
+rou = (k_n.^2 + a_n.^2 + eps1).^0.5 + eps2;
+
+Sx = pi/(2*atan(Qx));
+Sy = pi/(2*atan(Qy));
+
+% my_scaling = 0.9749;
+my_scaling = 1.0;
+
+Fx = (my_scaling * mu_x_max) .* Fz .* sin(Qx * atan(Sx * rou)) .* (k_n ./ rou);
+Fy = (my_scaling * mu_y_max) .* Fz .* sin(Qy * atan(Sy * rou)) .* (a_n ./ rou);
+
+% for debugging: should be <= 1 by construction
+mu_ratio = hypot(Fx./((my_scaling * mu_x_max).*Fz), Fy./((my_scaling * mu_y_max).*Fz));
+
+end
