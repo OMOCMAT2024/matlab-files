@@ -1,0 +1,352 @@
+Thought for 14m 37s
+
+Below is a self-contained MATLAB implementation of the minimum-curvature raceline QP (with optional curvature constraints and the iterative re-linearization loop) from Heilmeier et al. (the paper you uploaded 
+
+10.1080@00423114.2019.1631455
+
+). It follows the paper’s idea of moving each raceline point along the reference-line normal
+
+𝑟
+𝑖
+=
+𝑝
+𝑖
++
+𝛼
+𝑖
+𝑛
+𝑖
+r
+i
+	​
+
+=p
+i
+	​
+
++α
+i
+	​
+
+n
+i
+	​
+
+ with bounds from track widths and vehicle width 
+
+10.1080@00423114.2019.1631455
+
+, minimizes the exact 
+𝜅
+2
+κ
+2
+ expression 
+
+10.1080@00423114.2019.1631455
+
+, supports curvature constraints via the 
+𝜅
+ref
++
+𝜅
+var
+κ
+ref
+	​
+
++κ
+var
+	​
+
+ split 
+
+10.1080@00423114.2019.1631455
+
+, and implements the iterative loop + 
+𝛼
+α scaling and termination criterion 
+
+10.1080@00423114.2019.1631455
+
+.
+
+It’s designed to work directly from left/right boundary XY (the GitHub project itself expects centerline + widths , with default parameters like stepsizes/curvature limit shown in their racecar.ini ).
+
+
+Two practical notes (important)
+
+Point ordering matters: both boundaries must go around the track in the same direction and start roughly at the same “station”. Otherwise, any method (including the original pipeline) can produce weird normals/widths. The paper explicitly discusses normal-crossing issues on tight corners with wide tracks 
+
+10.1080@00423114.2019.1631455
+
+.
+
+This returns the minimum-curvature path (geometric). If you also want the velocity profile, the paper uses a forward–backward solver after curvature is known (Section 3.5).
+
+If you paste a tiny snippet of your boundary arrays format (first ~5 rows of each), I can adapt the import/resampling part to match your exact data layout (units, whether the loop is already closed, etc.).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Thought for 9m 35s
+
+I re-checked the math against the paper and the repo conventions, and there is one real correctness bug in my previous MATLAB code:
+
+1) Major bug: normal direction + α bounds convention mismatch
+
+The paper uses 
+𝑟
+𝑖
+=
+𝑝
+𝑖
++
+𝛼
+𝑖
+𝑛
+𝑖
+r
+i
+	​
+
+=p
+i
+	​
+
++α
+i
+	​
+
+n
+i
+	​
+
+ and 
+𝛼
+𝑖
+∈
+[
+−
+𝑤
+left
++
+𝑤
+veh
+/
+2
+,
+  
+𝑤
+right
+−
+𝑤
+veh
+/
+2
+]
+α
+i
+	​
+
+∈[−w
+left
+	​
+
++w
+veh
+	​
+
+/2,w
+right
+	​
+
+−w
+veh
+	​
+
+/2]. 
+
+10.1080@00423114.2019.1631455
+
+The GitHub repo explicitly states their normal vectors point to the right in driving direction, and boundaries are obtained as
+right bound = 
+𝑝
++
+𝑛
+ 
+𝑤
+right
+p+nw
+right
+	​
+
+, left bound = 
+𝑝
+−
+𝑛
+ 
+𝑤
+left
+p−nw
+left
+	​
+
+.
+
+In my code, I accidentally built left-pointing normals but still applied the right-normal α bounds, which can swap feasible space and distort the solution.
+
+2) The QP formulation itself is consistent with the paper
+
+The objective I implemented matches the paper’s exact 
+𝜅
+2
+κ
+2
+ discretization and the diagonal 
+𝑃
+𝑥
+𝑥
+,
+𝑃
+𝑥
+𝑦
+,
+𝑃
+𝑦
+𝑦
+P
+xx
+	​
+
+,P
+xy
+	​
+
+,P
+yy
+	​
+
+ matrices built from 
+(
+𝑥
+′
+,
+𝑦
+′
+)
+(x
+′
+,y
+′
+) of the reference line (α=0).
+Curvature constraints are implemented in the same “
+𝜅
+ref
++
+𝜅
+var
+κ
+ref
+	​
+
++κ
+var
+	​
+
+” split form. 
+
+10.1080@00423114.2019.1631455
+
+
+The iterative IQP loop id
+
+10.1080@00423114.2019.1631455
+
+us solution, reinterpolating to equal step, scaling α in early iterations, termination by curvature-linearization gap) is also per paper. 
+
+10.1080@00423114.2019.1631455
+
+3) Parameter defaults: pa
+
+10.1080@00423114.2019.1631455
+
+cecar.iniusesstepsize_reg=3.0, stepsize_interp_after_opt=2.0, width_opt=3.4, curvlim=0.12, iqp_iters_min=3, iqp_curverror_allowed=0.01`.
+
+The paper text mentions using 
+Δ
+𝜅
+max
+⁡
+=
+0.005
+Δκ
+max
+	​
+
+=0.005 on Berlin in their termination criterion. 
+
+10.1080@00423114.2019.1631455
+
+
+So 0.01 is “repo-default”; 0.005 is “paper example”.
+
+Corrected MATLAB code (fixes normal direction + width projection + termi
+
+10.1080@00423114.2019.1631455
+
+rrected drop-in version. The core QP math is the same, but:
+
+normals are right-pointing
+
+widths are computed consistently with repo convention (right on +n, left on −n)
+
+default kappa_error_allowed is 0.01 (repo), with a comment about 0.005 (paper)
+
+
+
+What is still “assumption-dependent” (not a QP math bug)
+
+Even with the corrected code, the boundary → reference-line + widths preprocessing is not uniquely defined. The TUM pipeline normally starts from a centerline + widths extracted from a map (distance transform / skeletonization). With only two polylines, my approach implicitly assumes they are reasonably “aligned” along the lap (resampling by arc-length and pairing by station). If your left/right boundaries are not aligned (different sampling density, different start indices, etc.), you can still get artifacts near corners.
+
+If you want, paste:
+
+sizes of your arrays (size(boundL), size(boundR))
+
+whether they’re already closed
+
+whether point i on left corresponds to point i on right
+
+…and I’ll give you the most robust boundary-to-reftrack construction for your case (still in MATLAB), then the min-curvature QP will behave like the repo/paper.
+
