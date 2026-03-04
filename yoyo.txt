@@ -1,0 +1,109 @@
+function [U_FL, U_FR, U_RL, U_RR, w_FL, w_FR, w_RL, w_RR, V_FL, V_FR, V_RL, V_RR, alpha_FL, alpha_FR, alpha_RL, alpha_RR] = wheel_kinematics(Ucar, V, yr, k_FL, k_FR, k_RL, k_RR, deta_ST, twF_h, twR_h, acom, bcom, td_FL, td_FR, td_RL, td_RR)
+
+U_FL = cos(deta_ST).*(Ucar + yr*twF_h) + sin(deta_ST).*(V+yr*acom);
+U_FR = cos(deta_ST).*(Ucar - yr*twF_h) + sin(deta_ST).*(V+yr*acom);
+U_RL = Ucar + yr*twR_h;
+U_RR = Ucar - yr*twR_h;
+
+w_FL = (k_FL + 1) .* U_FL / (td_FL/2);
+w_FR = (k_FR + 1) .* U_FR / (td_FR/2);
+w_RL = (k_RL + 1) .* U_RL / (td_RL/2);
+w_RR = (k_RR + 1) .* U_RR / (td_RR/2);
+
+V_FL = cos(deta_ST).*(V+yr*acom) - sin(deta_ST).*(Ucar+yr*twF_h);
+V_FR = cos(deta_ST).*(V+yr*acom) - sin(deta_ST).*(Ucar-yr*twF_h);
+V_RL = V - yr*bcom;
+V_RR = V - yr*bcom;
+
+alpha_FL = atan(V_FL ./ U_FL);
+alpha_FR = atan(V_FR ./ U_FR);
+alpha_RL = atan(V_RL ./ U_RL);
+alpha_RR = atan(V_RR ./ U_RR);
+
+end
+
+
+function [Fz_FL, Fz_FR, Fz_RL, Fz_RR] = wheel_load(Fx_tires, Fy_tires, Fdown, Fdrag, bcom, mass, gravity, hcom, hcop, acop, acom, dr, twF_h, twR_h)
+
+Fz_FL = ((bcom*(mass*gravity+Fdown)-(Fx_tires*hcom + Fdrag*(hcop-hcom) + Fdown*(acop-acom)))/(acom+bcom) + ((Fy_tires*hcom)*(-dr))/(twF_h*(-dr)-twR_h*(1-dr))) / 2;
+
+Fz_FR = ((bcom*(mass*gravity+Fdown)-(Fx_tires*hcom + Fdrag*(hcop-hcom) + Fdown*(acop-acom)))/(acom+bcom) - ((Fy_tires*hcom)*(-dr))/(twF_h*(-dr)-twR_h*(1-dr))) / 2;
+
+Fz_RL = ((acom*(mass*gravity+Fdown)+(Fx_tires*hcom + Fdrag*(hcop-hcom) + Fdown*(acop-acom)))/(acom+bcom) + ((Fy_tires*hcom)*(1-dr))/(twR_h*(1-dr)-(-dr)*twF_h)) / 2;
+
+Fz_RR = ((acom*(mass*gravity+Fdown)+(Fx_tires*hcom + Fdrag*(hcop-hcom) + Fdown*(acop-acom)))/(acom+bcom) - ((Fy_tires*hcom)*(1-dr))/(twR_h*(1-dr)-(-dr)*twF_h)) / 2;
+
+end
+
+
+function [Fx_tire, Fy_tire] = tire_force(k_tire, alpha_tire, Fz, Fz1, Fz2, mu_x_max1, mu_x_max2, mu_y_max1, mu_y_max2, k_max1, k_max2, alpha_max1, alpha_max2, Qx, Qy, rou_correction1, rou_correction2, dGrip)
+
+alpha_tire = alpha_tire * (-1) * 180/pi;
+
+mu_x_max1 = mu_x_max1 + dGrip;
+mu_x_max2 = mu_x_max2 + dGrip;
+mu_y_max1 = mu_y_max1 + dGrip;
+mu_y_max2 = mu_y_max2 + dGrip;
+
+mu_x_max = (Fz-Fz1)*(mu_x_max2-mu_x_max1)/(Fz2-Fz1) + mu_x_max1;
+mu_y_max = (Fz-Fz1)*(mu_y_max2-mu_y_max1)/(Fz2-Fz1) + mu_y_max1;
+
+k_max = (Fz-Fz1)*(k_max2-k_max1)/(Fz2-Fz1)+ k_max1;
+alpha_max = (Fz-Fz1)*(alpha_max2-alpha_max1)/(Fz2-Fz1)+ alpha_max1; % deg
+
+k_n = k_tire ./ k_max;
+alpha_n = alpha_tire ./ alpha_max;
+
+rou = (alpha_n.^2 + k_n.^2 + rou_correction1).^0.5 + rou_correction2;
+
+Sx = pi / (2*atan(Qx));
+Sy = pi / (2*atan(Qy));
+
+mu_x = mu_x_max .* sin(Qx*atan(Sx*rou));
+mu_y = mu_y_max .* sin(Qy*atan(Sy*rou));
+
+Fx_tire = mu_x .* Fz .* k_n ./ rou;
+Fy_tire = mu_y .* Fz .* alpha_n ./ rou;
+
+end
+
+
+function [f1, f2, f3, f4, f5, f6, f7, f8] = ODEs_rhs(Ucar, V, yr, ks, nn, k_FL, k_FR, k_RL, k_RR, deta_ST, Fx_tires, Fy_tires, u_Pkers, Fx_FL, Fx_FR, Fx_RL, Fx_RR, Fy_FL, Fy_FR, Fy_RL, Fy_RR, Fdrag, curvature_allpoints, mass, Iz, acom, bcom, twF_h, twR_h)
+
+force_1 = ( cos(deta_ST).*(Fx_FR+Fx_FL) - sin(deta_ST).*(Fy_FR+Fy_FL) + (Fx_RR+Fx_RL) ) - Fdrag;
+
+force_2 = ( cos(deta_ST).*(Fy_FR+Fy_FL) + sin(deta_ST).*(Fx_FR+Fx_FL) + (Fy_RR+Fy_RL) );
+
+St    = (1-nn.*curvature_allpoints) ./ (Ucar.*cos(ks)-V.*sin(ks));
+
+dUcardt  = (mass*yr.*V + force_1) / mass;
+
+dVdt  = (-mass*yr.*Ucar + force_2) / mass;
+
+dyrdt = (acom*(cos(deta_ST).*(Fy_FR+Fy_FL)+sin(deta_ST).*(Fx_FR+Fx_FL)) +...
+    twF_h*(sin(deta_ST).*Fy_FR-cos(deta_ST).*Fx_FR) - twR_h*Fx_RR +...
+    twF_h*(cos(deta_ST).*Fx_FL-sin(deta_ST).*Fy_FL) + twR_h*Fx_RL - bcom*(Fy_RR+Fy_RL))    /    Iz;
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% dFx_tiresdt = (-Fx_tires + force_1) / (0.2);
+dFx_tiresdt = (-Fx_tires + force_1 + Fdrag) / 0.2;
+
+dFy_tiresdt = (-Fy_tires + force_2) / 0.2;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+dPkersdt = u_Pkers;
+
+%-------------------------------------------------------------------------%
+
+f1 = St .* dUcardt;
+f2 = St .* dVdt;
+f3 = St .* dyrdt;
+f4 = St .* yr - curvature_allpoints;
+f5 = St .* (Ucar.*sin(ks) + V.*cos(ks));
+
+f6 = St .* dFx_tiresdt;
+f7 = St .* dFy_tiresdt;
+
+f8 = St .* dPkersdt;
+
+end
