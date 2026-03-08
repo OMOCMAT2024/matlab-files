@@ -1,0 +1,69 @@
+veh.Fz1 = 2000;   % N
+veh.Fz2 = 6000;   % N
+veh.Qx  = 1.35;
+veh.Qy  = 1.5;
+veh.eps1 = 1e-5;
+veh.eps2 = 1e-5;
+
+veh.my_effective_mu_scaling = 1.0; % 0.9749
+
+% smoothing parameters for soft nonnegative clamp
+veh.rou_smooth = 1e-2;
+% veh.offset     = 0.00318298;
+veh.offset     = veh.rou_smooth / pi;
+
+
+function [Fx, Fy, mu_ratio] = tire_force_tanEllipse(veh, kappa, tan_alpha, Fz)
+
+Qx  = veh.Qx;
+Qy  = veh.Qy;
+eps1 = veh.eps1;
+eps2 = veh.eps2;
+
+k_max = tan(pi/(2*veh.Cx))/veh.Bx;
+alpha_peak = tan(pi/(2*veh.Cy))/veh.By;
+tan_alpha_max = tan(alpha_peak);
+
+[mu_x_max, mu_y_max] = muxmax_muymax_func(veh, Fz);
+
+k_n = kappa / k_max;
+a_n = (-tan_alpha) / tan_alpha_max;
+
+rou = (k_n.^2 + a_n.^2 + eps1).^0.5 + eps2;
+
+Sx = pi/(2*atan(Qx));
+Sy = pi/(2*atan(Qy));
+
+my_effective_mu_scaling = veh.my_effective_mu_scaling;
+
+Fx = (my_effective_mu_scaling * mu_x_max) .* Fz .* sin(Qx * atan(Sx * rou)) .* (k_n ./ rou);
+Fy = (my_effective_mu_scaling * mu_y_max) .* Fz .* sin(Qy * atan(Sy * rou)) .* (a_n ./ rou);
+
+% for debugging: should be <= 1 by construction
+mu_ratio = hypot(Fx./((my_effective_mu_scaling * mu_x_max).*Fz), Fy./((my_effective_mu_scaling * mu_y_max).*Fz));
+
+end
+
+function [mu_x_max, mu_y_max] = muxmax_muymax_func(veh, Fz)
+
+Fz1 = veh.Fz1;   % N
+Fz2 = veh.Fz2;   % N
+rou_smooth = veh.rou_smooth;
+
+% Option B (active in your file):
+mu_x_max1 = (veh.d1x*Fz1 + veh.d2x)/Fz1;  mu_x_max2 = (veh.d1x*Fz2 + veh.d2x)/Fz2;
+mu_y_max1 = (veh.d1y*Fz1 + veh.d2y)/Fz1;  mu_y_max2 = (veh.d1y*Fz2 + veh.d2y)/Fz2;
+
+mu_x_max_raw = (Fz - Fz1) * (mu_x_max2 - mu_x_max1) / (Fz2 - Fz1) + mu_x_max1;
+mu_y_max_raw = (Fz - Fz1) * (mu_y_max2 - mu_y_max1) / (Fz2 - Fz1) + mu_y_max1;
+
+mu_x_max = mu_x_max_raw + smooth_ramp_func(mu_x_max_raw, rou_smooth);
+mu_y_max = mu_y_max_raw + smooth_ramp_func(mu_y_max_raw, rou_smooth);
+
+end
+
+function smooth_ramp = smooth_ramp_func(x, rou_smooth)
+
+smooth_ramp = (-x) .* ( atan2(-x, rou_smooth)/pi + 1/2 ) + rou_smooth / pi;
+
+end
