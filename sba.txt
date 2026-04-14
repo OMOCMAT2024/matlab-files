@@ -1,0 +1,136 @@
+
+
+
+
+% 
+% % % Wheel torques: rear-drive + smooth ABS brake formulation
+% % Assumptions/signs:
+% %   - Tt >= 0  : total rear drive torque request
+% %   - Tb <= 0  : total brake torque request
+% %   - SX < 0   : braking slip in your sign convention
+% %   - wheel dynamics remain: dot_omega = (Twheel - fx*veh.rw)/veh.Iw
+% 
+% kb = 0.65;   % exact front brake fraction
+% 
+% % ===== ABS tuning parameters (good starting values) =====
+% abs_trig    = 0.10;   % ABS trigger in braking-slip magnitude
+% abs_width   = 0.02;   % smooth activation width
+% abs_eta     = 0.70;   % global brake-relief strength, 0<=abs_eta<1
+% abs_lr_gain = 15.0;   % left-right redistribution sensitivity
+% abs_eps_pos = 1e-4;   % smooth positive-part regularization
+% abs_eps_max = 1e-4;   % smooth-max regularization
+% 
+% % ===== Smooth braking-slip magnitudes from your SX definition =====
+% % Since SX is negative under braking, use smooth max(-SX, 0)
+% absSlip_fl = 0.5*((-SXfl) + sqrt(SXfl^2 + abs_eps_pos^2));
+% absSlip_fr = 0.5*((-SXfr) + sqrt(SXfr^2 + abs_eps_pos^2));
+% absSlip_rl = 0.5*((-SXrl) + sqrt(SXrl^2 + abs_eps_pos^2));
+% absSlip_rr = 0.5*((-SXrr) + sqrt(SXrr^2 + abs_eps_pos^2));
+% 
+% % ===== Smooth maxima =====
+% absSlip_f = 0.5*(absSlip_fl + absSlip_fr + sqrt((absSlip_fl - absSlip_fr)^2 + abs_eps_max^2));
+% absSlip_r = 0.5*(absSlip_rl + absSlip_rr + sqrt((absSlip_rl - absSlip_rr)^2 + abs_eps_max^2));
+% absSlip_g = 0.5*(absSlip_f  + absSlip_r  + sqrt((absSlip_f  - absSlip_r )^2 + abs_eps_max^2));
+% 
+% % ===== Smooth ABS gates =====
+% g_f   = 0.5*(1 + tanh((absSlip_f - abs_trig)/abs_width));
+% g_r   = 0.5*(1 + tanh((absSlip_r - abs_trig)/abs_width));
+% g_abs = 0.5*(1 + tanh((absSlip_g - abs_trig)/abs_width));
+% 
+% % ===== Global brake relief while preserving exact front-rear ratio =====
+% % Tb <= 0, so multiplying by (1 - abs_eta*g_abs) makes braking less negative
+% Tb_eff = (1 - abs_eta*g_abs) * Tb;
+% 
+% % Exact front-rear brake split
+% Tbf = kb * Tb_eff;          % total front brake torque  <= 0
+% Tbr = (1-kb) * Tb_eff;      % total rear  brake torque  <= 0
+% 
+% % ===== Smooth left-right redistribution inside each axle =====
+% % Sign check:
+% % if left wheel has larger braking-slip magnitude than right,
+% % absSlip_left > absSlip_right, then Delta > 0, and the left brake torque
+% % becomes less negative while the right becomes more negative.
+% Delta_f = -0.5 * Tbf * g_f * tanh(abs_lr_gain * (absSlip_fl - absSlip_fr));
+% Delta_r = -0.5 * Tbr * g_r * tanh(abs_lr_gain * (absSlip_rl - absSlip_rr));
+% 
+% % Front wheel torques (front wheels only brake)
+% Tbfl = 0.5*Tbf + Delta_f;
+% Tbfr = 0.5*Tbf - Delta_f;
+% 
+% Tfl = Tbfl;
+% Tfr = Tbfr;
+% 
+% % Rear wheel torques = equal drive split + rear brake split
+% Tbrl = 0.5*Tbr + Delta_r;
+% Tbrr = 0.5*Tbr - Delta_r;
+% 
+% Trl = 0.5*Tt + Tbrl;
+% Trr = 0.5*Tt + Tbrr;
+
+
+
+
+
+
+
+% % Wheel torques: rear-drive + smooth ABS brake formulation
+% Sign conventions in your model:
+%   - Tt >= 0  : total rear drive torque request
+%   - Tb <= 0  : total brake torque request
+%   - SX < 0   : braking slip
+%   - wheel dynamics remain: dot_omega = (Twheel - fx*veh.rw)/veh.Iw
+
+kb = 0.65;   % exact front brake fraction
+
+% ===== ABS tuning parameters =====
+abs_trig    = 0.10;   % ABS trigger in braking-slip magnitude
+abs_width   = 0.02;   % smooth activation width
+abs_eta     = 0.70;   % global brake-relief strength, 0 <= abs_eta < 1
+abs_lr_gain = 15.0;   % left-right redistribution sensitivity
+abs_eps_pos = 1e-4;   % smooth positive-part regularization
+abs_eps_max = 1e-4;   % smooth-max regularization
+
+% ===== Smooth braking-slip magnitudes from your SX definition =====
+% Since SX is negative under braking, use smooth max(-SX, 0)
+absSlip_fl = 0.5*((-SXfl) + sqrt(SXfl^2 + abs_eps_pos^2));
+absSlip_fr = 0.5*((-SXfr) + sqrt(SXfr^2 + abs_eps_pos^2));
+absSlip_rl = 0.5*((-SXrl) + sqrt(SXrl^2 + abs_eps_pos^2));
+absSlip_rr = 0.5*((-SXrr) + sqrt(SXrr^2 + abs_eps_pos^2));
+
+% ===== Smooth maxima =====
+absSlip_f = 0.5*(absSlip_fl + absSlip_fr + sqrt((absSlip_fl - absSlip_fr)^2 + abs_eps_max^2));
+absSlip_r = 0.5*(absSlip_rl + absSlip_rr + sqrt((absSlip_rl - absSlip_rr)^2 + abs_eps_max^2));
+absSlip_g = 0.5*(absSlip_f  + absSlip_r  + sqrt((absSlip_f  - absSlip_r )^2 + abs_eps_max^2));
+
+% ===== Smooth ABS gates =====
+g_f   = 0.5*(1 + tanh((absSlip_f - abs_trig)/abs_width));
+g_r   = 0.5*(1 + tanh((absSlip_r - abs_trig)/abs_width));
+g_abs = 0.5*(1 + tanh((absSlip_g - abs_trig)/abs_width));
+
+% ===== Global brake relief while preserving exact front-rear ratio =====
+% Tb <= 0, so multiplying by (1 - abs_eta*g_abs) makes braking less negative
+Tb_eff = (1 - abs_eta*g_abs) * Tb;
+
+% ===== Exact front-rear brake split =====
+Tbf = kb * Tb_eff;          % total front brake torque <= 0
+Tbr = (1-kb) * Tb_eff;      % total rear  brake torque <= 0
+
+% ===== Smooth left-right redistribution inside each axle =====
+% If left wheel has larger braking-slip magnitude than right,
+% Delta > 0 and the left brake torque becomes less negative.
+Delta_f = -0.5 * Tbf * g_f * tanh(abs_lr_gain * (absSlip_fl - absSlip_fr));
+Delta_r = -0.5 * Tbr * g_r * tanh(abs_lr_gain * (absSlip_rl - absSlip_rr));
+
+% ===== Front wheel torques (front wheels only brake) =====
+Tbfl = 0.5*Tbf + Delta_f;
+Tbfr = 0.5*Tbf - Delta_f;
+
+Tfl = Tbfl;
+Tfr = Tbfr;
+
+% ===== Rear wheel torques = equal drive split + rear brake split =====
+Tbrl = 0.5*Tbr + Delta_r;
+Tbrr = 0.5*Tbr - Delta_r;
+
+Trl = 0.5*Tt + Tbrl;
+Trr = 0.5*Tt + Tbrr;
