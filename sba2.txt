@@ -1,0 +1,196 @@
+% % Wheel torques: rear-drive + smooth ABS relief-only formulation
+% Sign conventions in your model:
+%   - Tt >= 0  : total rear drive torque request
+%   - Tb <= 0  : total brake torque request
+%   - SX < 0   : braking slip
+%   - wheel dynamics remain: dot_omega = (Twheel - fx*veh.rw)/veh.Iw
+
+kb = 0.65;   % nominal front brake fraction
+
+% ===== ABS tuning parameters =====
+abs_trig    = 0.10;   % ABS trigger in braking-slip magnitude
+abs_width   = 0.02;   % smooth activation width
+abs_eta     = 0.70;   % wheel-wise brake-relief strength, 0 <= abs_eta < 1
+abs_eps_pos = 1e-4;   % smooth positive-part regularization
+
+% ===== Smooth braking-slip magnitudes from your SX definition =====
+% Since SX is negative under braking, use smooth max(-SX, 0)
+absSlip_fl = 0.5*((-SXfl) + sqrt(SXfl^2 + abs_eps_pos^2));
+absSlip_fr = 0.5*((-SXfr) + sqrt(SXfr^2 + abs_eps_pos^2));
+absSlip_rl = 0.5*((-SXrl) + sqrt(SXrl^2 + abs_eps_pos^2));
+absSlip_rr = 0.5*((-SXrr) + sqrt(SXrr^2 + abs_eps_pos^2));
+
+% ===== Independent smooth ABS gates for each wheel =====
+g_fl = 0.5*(1 + tanh((absSlip_fl - abs_trig)/abs_width));
+g_fr = 0.5*(1 + tanh((absSlip_fr - abs_trig)/abs_width));
+g_rl = 0.5*(1 + tanh((absSlip_rl - abs_trig)/abs_width));
+g_rr = 0.5*(1 + tanh((absSlip_rr - abs_trig)/abs_width));
+
+% ===== Nominal front-rear brake split before ABS relief =====
+Tbf_cmd = kb * Tb;          % nominal total front brake torque <= 0
+Tbr_cmd = (1-kb) * Tb;      % nominal total rear  brake torque <= 0
+
+% ===== Relief-only ABS: each wheel is relieved independently =====
+% Since Tb <= 0, multiplying by (1 - abs_eta*g_i) makes the torque
+% less negative when that wheel needs ABS.
+Tbfl = 0.5*Tbf_cmd * (1 - abs_eta*g_fl);
+Tbfr = 0.5*Tbf_cmd * (1 - abs_eta*g_fr);
+Tbrl = 0.5*Tbr_cmd * (1 - abs_eta*g_rl);
+Tbrr = 0.5*Tbr_cmd * (1 - abs_eta*g_rr);
+
+% ===== Applied wheel torques =====
+% Front wheels only brake
+Tfl = Tbfl;
+Tfr = Tbfr;
+
+% Rear wheels: equal rear drive split + independent rear brake relief
+Trl = 0.5*Tt + Tbrl;
+Trr = 0.5*Tt + Tbrr;
+
+
+
+
+
+
+
+
+This version does exactly what you asked for:
+
+if one wheel needs ABS, only that wheel’s brake torque becomes less negative,
+the other wheel does not get extra braking just because the first one was relieved,
+rear drive torque remains exactly 50-50,
+the nominal front-rear split is still set by kb before ABS acts.
+
+The one tradeoff is that during ABS action, the exact axle totals and exact overall front-rear brake ratio are no longer strictly preserved wheel-by-wheel, because each wheel is relieved independently. That is the unavoidable consequence of “relieve one wheel without increasing the other.”
+
+
+The key checks all pass:
+
+If Tb = 0, then Tbfl = Tbfr = Tbrl = Tbrr = 0.
+
+If ABS is inactive on all wheels, then
+
+𝑇
+𝑏
+𝑓
+𝑙
+=
+𝑇
+𝑏
+𝑓
+𝑟
+=
+1
+2
+𝑘
+𝑏
+𝑇
+𝑏
+,
+𝑇
+𝑏
+𝑟
+𝑙
+=
+𝑇
+𝑏
+𝑟
+𝑟
+=
+1
+2
+(
+1
+−
+𝑘
+𝑏
+)
+𝑇
+𝑏
+T
+bfl
+	​
+
+=T
+bfr
+	​
+
+=
+2
+1
+	​
+
+k
+b
+	​
+
+T
+b
+	​
+
+,T
+brl
+	​
+
+=T
+brr
+	​
+
+=
+2
+1
+	​
+
+(1−k
+b
+	​
+
+)T
+b
+	​
+
+
+so it reduces to the nominal equal left-right brake split.
+
+If only one wheel has large braking slip, only that wheel is relieved.
+The opposite wheel is not forced to get more brake torque.
+
+Rear drive torque remains exactly
+
+1
+2
+𝑇
+𝑡
+,
+ 
+1
+2
+𝑇
+𝑡
+.
+2
+1
+	​
+
+T
+t
+	​
+
+, 
+2
+1
+	​
+
+T
+t
+	​
+
+.
+
+So, for the relief-only behavior you requested, the block is correct.
+
+One more point to be completely precise: this block is fully correct for the relief-only ABS formulation you asked for. It does not preserve the exact front-rear brake ratio during ABS intervention, because that is mathematically incompatible with “relieve one wheel without increasing another.” That is not an error in the code; it is the intended property of this formulation.
+
+
+
+
