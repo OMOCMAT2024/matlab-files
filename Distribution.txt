@@ -1,0 +1,99 @@
+kb = 0.65;
+
+Tbf = kb * Tb;
+Tbr = (1-kb) * Tb;
+
+% user-chosen constants, tuned small enough
+Kf = ...;   % [1/(m/s^2)]
+Kr = ...;   % [1/(m/s^2)]
+
+zf = Kf * ay_bar;
+zr = Kr * ay_bar;
+
+Tfl = (0.5 - zf) * Tbf;
+Tfr = (0.5 + zf) * Tbf;
+
+Trl = 0.5*Tt + (0.5 - zr) * Tbr;
+Trr = 0.5*Tt + (0.5 + zr) * Tbr;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+% Wheel torques: rear-drive + bounded ay_bar-based brake split (final recommended version)
+% Sign conventions:
+%   Tt >= 0 : total rear drive torque
+%   Tb <= 0 : total brake torque
+%
+% Design goals satisfied:
+%   - exact front/rear brake split: 65% / 35%
+%   - exact rear-drive split: 50% / 50%
+%   - left/right brake asymmetry allowed in cornering
+%   - no ABS logic inside torque law
+%   - Kf, Kr are constants (best for NLP), but chosen from geometry and
+%     safely bounded using the full ay_bar limits of your NLP
+
+kb = 0.65;   % exact front brake fraction
+
+% ===== Exact front/rear brake totals =====
+Tbf = kb * Tb;          % total front brake torque <= 0
+Tbr = (1-kb) * Tb;      % total rear  brake torque <= 0
+
+% ===== Full feasible ay_bar range from your existing NLP state bounds =====
+% State 7 is ay_bar, and x_min/x_max are scaled by x_s
+ay_bar_abs_max = max(abs(x_min(7)*x_s(7)), abs(x_max(7)*x_s(7)));
+
+% ===== Safe maximum left-right brake bias =====
+% z = K*ay_bar enters weights (0.5-z) and (0.5+z).
+% Using z_bias_max = 0.30 guarantees weights stay in [0.20, 0.80]
+% over the full feasible ay_bar range.
+z_bias_max = 0.30;
+
+% ===== Geometry-inspired nominal gains (from your wheel-load structure) =====
+D    = veh.twF_h * veh.dr + veh.twR_h * (1 - veh.dr);
+
+Fzf0 = veh.m * veh.g * veh.lr / (veh.lf + veh.lr);   % static front axle load
+Fzr0 = veh.m * veh.g * veh.lf / (veh.lf + veh.lr);   % static rear  axle load
+
+Kf_geom = veh.m * veh.hc * veh.dr       / (2 * D * Fzf0);
+Kr_geom = veh.m * veh.hc * (1 - veh.dr) / (2 * D * Fzr0);
+
+% ===== One common constant scaling for NLP safety =====
+% This preserves the front/rear relative magnitude of the nominal gains,
+% while guaranteeing |Kf*ay_bar| <= z_bias_max and |Kr*ay_bar| <= z_bias_max
+% over the whole feasible ay_bar range.
+eps_K = 1e-12;
+Kgeom_max = max(abs([Kf_geom, Kr_geom]));
+Kmax_allow = z_bias_max / max(ay_bar_abs_max, eps_K);
+
+alpha_lr = min(1.0, Kmax_allow / max(Kgeom_max, eps_K));
+
+Kf = alpha_lr * Kf_geom;
+Kr = alpha_lr * Kr_geom;
+
+% ===== Left-right brake bias variables =====
+zf = Kf * ay_bar;
+zr = Kr * ay_bar;
+
+% ===== Front wheel torques: braking only =====
+Tfl = (0.5 - zf) * Tbf;
+Tfr = (0.5 + zf) * Tbf;
+
+% ===== Rear wheel torques: exact 50/50 drive + rear brake redistribution =====
+Trl = 0.5 * Tt + (0.5 - zr) * Tbr;
+Trr = 0.5 * Tt + (0.5 + zr) * Tbr;
+
+start from the geometry-inspired constants, then apply one common constant scale factor so that over your full allowed ay_bar range, the left-right brake weights always stay in a safe interval. This keeps the algebra smooth and simple, preserves the front/rear relative bias shape, and avoids invalid weights.
+
+
+z_bias_max = 0.30;
