@@ -1,0 +1,664 @@
+A first important conclusion: yes, the Moose/ISO double-lane-change can be used to fit an effective roll damping parameter, but it is better treated as a transient-response matching problem, not as a literal physical damper coefficient of the real independent suspensions.
+
+Thought for 1m 43s
+
+Yes, it is possible, and I think your idea is reasonable if you treat the fitted value as an effective roll damping parameter:
+
+real independent suspension + tyres + anti-roll bar + bushings + nonlinear dampers
+        ↓ identification through measured roll transient
+simple model: I_phi*phi_ddot + C_phi*phi_dot + K_phi*phi = M_roll
+        ↓
+effective C_phi fitted for this maneuver, speed range, and amplitude
+
+It will not be a literal physical damper coefficient of the real car, but it can be a useful equivalent parameter for your simplified roll model.
+
+
+1. Is the Moose Test suitable for fitting roll damping?
+
+Yes, but with caution.
+
+The Moose Test / ISO double-lane-change is suitable because it has strong left-right transient lateral acceleration. That excites:
+
+roll angle
+roll rate
+yaw-roll coupling
+lateral load-transfer transient
+roll overshoot after steering reversal
+roll settling after lane recovery
+
+ISO 3888-2 is specifically a severe closed-loop lane-change / obstacle-avoidance track intended to evaluate a part of vehicle dynamics and road-holding ability. The current ISO page shows ISO 3888-2:2025 as the published version, with ISO 3888-2:2011 withdrawn.
+
+However, for parameter identification, I would say:
+
+Moose Test = good validation and useful fitting maneuver
+but not the cleanest first identification maneuver
+
+The cleaner tests are open-loop steering tests, because they remove the driver/path-following ambiguity. ISO 7401:2011 is directly relevant because it specifies open-loop methods for lateral transient response of road vehicles.
+
+So my recommendation is:
+
+Best identification order:
+1. Step steer / sine steer / sine-with-dwell / slalom at fixed speed
+2. Moose Test / double lane change for validation and final retuning
+3. Minimum-time OCP over the Moose corridor only after the damping parameter is already roughly identified
+2. Important fitting warning
+
+For your simple model, something like this is probably used:
+
+I_phi * phi_ddot + C_phi * phi_dot + K_phi * phi = M_roll
+
+where approximately:
+
+M_roll ≈ m_s * h_roll * a_y
+
+If you use the Moose Test, you should fit C_phi against the measured time histories:
+
+phi_meas(t)
+phi_dot_meas(t)
+a_y_meas(t)
+v_x_meas(t)
+yaw_rate_meas(t)
+steering_meas(t)
+
+The most important signal is not just the peak roll angle. You should fit:
+
+roll overshoot
+roll-rate peak
+phase lag between a_y and phi
+decay after steering reversal
+settling after exiting the maneuver
+
+A simple objective could be:
+
+J_fit = sum( w_phi  * (phi_model     - phi_meas).^2 ...
+           + w_dphi * (dphi_model    - dphi_meas).^2 ...
+           + w_ay   * (ay_model      - ay_meas).^2 );
+
+But if your vehicle model is simple, I would probably fit mainly:
+
+phi(t)
+phi_dot(t)
+
+and use measured a_y(t) as the excitation input.
+
+That means you can identify the roll subsystem almost independently:
+
+input  = measured lateral acceleration a_y(t)
+output = measured sprung-mass roll angle phi(t)
+fit    = C_phi, maybe also K_phi and I_phi if uncertain
+
+This is better than asking the full vehicle model to reproduce everything at once.
+
+3. I read your code: is your Moose Test track suitable?
+
+Your uploaded straight_circle_track.m contains two scripts concatenated together:
+
+Part 1: straight + repeated circle track
+Part 2: ISO 3888-2-style Moose Test corridor + smooth reference path
+
+As a single MATLAB file, this structure is not ideal because MATLAB local functions should be placed after the script section. Your file has script code, then a local function, then another script section, then more local functions. This can easily cause scope/function-definition problems. For serious use, the Moose Test part should be separated into its own standalone script, for example:
+
+iso3888_2_moose_corridor_reference.m
+
+The Moose Test part itself is conceptually good. It defines:
+
+track.L1 = 12.0;
+track.L2 = 13.5;
+track.L3 = 11.0;
+track.L4 = 12.5;
+track.L5 = 12.0;
+track.laneOffset = 1.0;
+
+track.b1 = 1.1*vehicleWidth + 0.25;
+track.b3 = vehicleWidth + 1.0;
+track.b5 = max(1.3*vehicleWidth + 0.25, 3.0);
+
+For your default:
+
+vehicleWidth = 1.85;
+
+this gives:
+
+b1 = 2.285 m
+b3 = 2.850 m
+b5 = 3.000 m
+
+The smooth reference path uses a quintic smoothstep, so the reference path has smooth position, heading, and curvature. That is good for direct optimal control because it avoids sharp discontinuities in curvature.
+
+So my verdict is:
+
+For OCP numerical testing: yes, suitable.
+For real ISO compliance: check against ISO 3888-2:2025 if strict compliance matters.
+For roll damping identification: suitable, but better if you add pre-entry and post-exit straight sections.
+4. The main issue with your current Moose track for damping identification
+
+Your current Moose corridor length is only:
+
+X5 = L1 + L2 + L3 + L4 + L5
+   = 12 + 13.5 + 11 + 12.5 + 12
+   = 61 m
+
+That is enough to define the lane-change corridor, but not ideal for roll damping fitting.
+
+For damping identification, you need to observe:
+
+before maneuver: steady initial roll = 0
+during maneuver: roll excitation
+after maneuver: roll decay / settling
+
+Therefore I recommend adding:
+
+L_pre  = 20 to 50 m;
+L_post = 30 to 80 m;
+
+The final test should be:
+
+pre-entry straight
+→ Moose / double lane change corridor
+→ post-exit straight
+
+The post-exit straight is especially important because the roll decay after the final steering reversal is very informative for identifying C_phi.
+
+
+
+
+
+
+
+5. Recommended initial condition for direct optimal control
+
+For roll damping identification, do not start from rest.
+
+Start the vehicle already moving straight before the first gate.
+
+For a road-relative or path-relative OCP, I would use:
+
+s0      = 0;
+n0      = 0;
+alpha0  = 0;
+vx0     = V_entry;
+vy0     = 0;
+r0      = 0;
+
+phi0    = 0;
+dphi0   = 0;
+
+theta0  = 0;
+dtheta0 = 0;
+
+delta0  = 0;
+
+where phi is roll and theta is pitch.
+
+If your pitch/roll states are defined relative to static equilibrium, then:
+
+phi0    = 0;
+theta0  = 0;
+
+is correct.
+
+If your pitch/roll states are absolute sprung-mass attitudes including static ride equilibrium, then use the static equilibrium pitch angle and zero roll angle.
+
+For entry speed, I would not use one value only. Use a sweep:
+
+40 km/h  = 11.11 m/s
+50 km/h  = 13.89 m/s
+60 km/h  = 16.67 m/s
+70 km/h  = 19.44 m/s
+80 km/h  = 22.22 m/s
+
+For first tests, I recommend:
+
+V_entry = 16.67;  % 60 km/h
+
+Then fit/check the damping parameter at several entry speeds. If one C_phi only works at one speed, it is not a robust effective parameter.
+
+6. Should you use throttle, brake, and steering?
+
+For roll damping fitting, my recommendation is:
+
+Use steering as the main control.
+Do not let throttle and brake be freely optimized.
+
+More specifically:
+
+Best option for clean roll damping fitting
+
+Use:
+
+fixed or tightly constrained speed
+steering control only
+
+That means:
+
+vx ≈ V_entry
+
+and the optimizer controls:
+
+delta
+or steering-rate
+
+This isolates the lateral transient and roll response. It avoids pitch/brake/throttle effects contaminating the roll damping identification.
+
+If you want to mimic ISO 3888-2 more closely
+
+Use:
+
+initial speed fixed
+throttle = 0 after entry
+brake = 0 after entry
+steering/path-following only
+
+MathWorks’ double-lane-change reference description says that for ISO 3888-2 the driver accelerates to a target speed, releases the accelerator, then steers through the lane change and back.
+
+So for simulation:
+
+T_drive = 0;
+T_brake = 0;
+
+inside the maneuver, except maybe a small drag-compensation throttle if you want nearly constant speed.
+
+For minimum-time performance study
+
+Use:
+
+throttle + brake + steering
+
+but this is no longer clean roll damping identification.
+
+If you allow full throttle/brake/steering with a minimum-time objective, the optimizer may:
+
+brake before the lane change
+accelerate where roll excitation is smaller
+choose a smoother path than the real driver
+avoid the most aggressive roll transient
+produce a result that is fast but not useful for fitting C_phi
+
+So I would separate the two problems:
+
+Problem A: identify C_phi
+Objective: match measured roll response
+Controls: steering only, speed fixed or measured
+
+Problem B: study minimum-time behavior
+Objective: minimum time
+Controls: throttle, brake, steering
+C_phi: already fitted from Problem A
+
+
+
+
+7. What I recommend for your OCP setup
+
+For fitting your roll damping parameter, I recommend this formulation:
+
+Given:
+    Moose corridor geometry
+    fixed V_entry or measured v_x(t)
+    measured roll angle phi_meas(t)
+
+Controls:
+    steering-rate u_delta only
+
+States:
+    path position
+    lateral deviation
+    heading error
+    vx, vy, yaw rate
+    roll angle phi
+    roll rate phi_dot
+    pitch angle theta
+    pitch rate theta_dot
+
+Constraints:
+    vehicle stays inside shrunken corridor
+    steering angle bounds
+    steering-rate bounds
+    vx close to target speed
+
+Objective:
+    match measured roll response
+    optionally penalize path error and steering effort
+
+For example:
+
+J = integral( ...
+      w_phi  * (phi - phi_meas)^2 ...
+    + w_dphi * (dphi - dphi_meas)^2 ...
+    + w_vx   * (vx - vx_meas)^2 ...
+    + w_u    * u_delta^2 ...
+    ) dt;
+
+If you do not have measured steering, this is acceptable: the optimizer finds a steering input that drives through the Moose corridor and matches roll response.
+
+If you do have measured steering, even better:
+
+J = integral( ...
+      w_phi   * (phi - phi_meas)^2 ...
+    + w_dphi  * (dphi - dphi_meas)^2 ...
+    + w_delta * (delta - delta_meas)^2 ...
+    ) dt;
+8. Important correction for your code if using the corridor in OCP
+
+Your code builds the full lane/corridor width. But if the OCP state represents the vehicle CG/reference point, you should not allow the CG to go all the way to the lane boundary.
+
+You should shrink the usable lateral corridor by approximately:
+
+usable_margin = 0.5*vehicleWidth + safetyMargin;
+
+So if your road-relative lateral coordinate is n, use something like:
+
+n_min = -0.5*ref.width + 0.5*vehicleWidth + safetyMargin;
+n_max =  0.5*ref.width - 0.5*vehicleWidth - safetyMargin;
+
+For example:
+
+safetyMargin = 0.10;  % [m]
+
+n_min = -0.5*ref.width + 0.5*vehicleWidth + safetyMargin;
+n_max =  0.5*ref.width - 0.5*vehicleWidth - safetyMargin;
+
+With your narrowest width:
+
+b1 = 2.285 m
+vehicleWidth = 1.85 m
+
+the available CG half-width is only:
+
+0.5*(2.285 - 1.85) = 0.2175 m
+
+So the ISO corridor is quite tight if you model the finite vehicle width correctly.
+
+This is good for a Moose Test, but it may be difficult for a minimum-time OCP. For early debugging, I would artificially widen the corridor first, then return to the real ISO width.
+
+
+
+9. My final recommendation
+
+For your purpose, I would do this:
+
+1. Separate the Moose Test code from the straight-circle code.
+2. Add 30 m pre-entry straight and 50 m post-exit straight.
+3. Use the Moose corridor as a constrained path, not only a centerline-following path.
+4. Start at fixed speed, e.g. 60 km/h.
+5. Initial states: straight-line steady condition, phi = 0, phi_dot = 0, pitch rate = 0.
+6. For fitting roll damping: use steering only, with speed fixed or tightly constrained.
+7. Do not use free throttle/brake for the damping fit.
+8. After C_phi is fitted, use throttle + brake + steering for minimum-time studies.
+
+So my direct answer is:
+
+Yes, a real Moose Test can be used to fit your simplified roll damping parameter,
+but I would fit an effective roll damping value from measured transient roll response,
+not interpret it as the real physical damper coefficient.
+
+Your Moose Test track code is suitable as a starting point,
+but I would split it into a standalone file, add pre-entry/post-exit straight sections,
+shrink the usable corridor for vehicle width, and use steering-only or fixed-speed steering
+for the damping-identification problem.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+After re-checking the actual uploaded file, I would slightly strengthen one recommendation: for identifying roll damping, do not use a pure minimum-time objective as the fitting problem. Use measured-input or fixed-speed transient matching first, then use minimum-time later for validation/performance.
+
+Thought for 1m 20s
+
+I double-checked my previous recommendations and the uploaded code. My main conclusion is:
+
+Yes: a Moose Test can be used to fit an effective roll damping parameter.
+
+But: do not use a pure minimum-time OCP as the fitting problem.
+Use the Moose Test as a transient roll-response identification / validation maneuver first.
+Then use the fitted roll damping parameter in your minimum-time lap simulation later.
+
+The reason is important: a minimum-time optimizer will choose a path, steering history, speed profile, throttle, and braking strategy that may be different from the real driver/test vehicle. That makes it hard to know whether the roll mismatch comes from the roll damping parameter or from different excitation input.
+
+1. My corrected recommendation
+
+For fitting your simplified roll model,
+
+I_phi * phi_ddot + C_phi * phi_dot + K_phi * phi = M_roll
+
+the cleanest identification approach is:
+
+Measured real car:
+    lateral acceleration a_y(t)
+    roll angle phi(t)
+    roll rate phi_dot(t), if available
+    speed v_x(t)
+    steering angle delta(t), if available
+
+Simple model:
+    use measured a_y(t) or measured steering/speed as the input
+    fit C_phi so that phi_model(t) matches phi_real(t)
+
+So the Moose Test is useful, but I would use it like this:
+
+Real Moose Test data
+        ↓
+extract a_y(t), phi(t), phi_dot(t), v_x(t), delta(t)
+        ↓
+fit effective C_phi
+        ↓
+validate the simple model on another speed or another lane-change run
+        ↓
+use fitted C_phi in minimum-time OCP
+
+I would not first run a minimum-time OCP and tune C_phi until its roll response looks like the real Moose Test. That mixes up too many things.
+
+2. Is the Moose Test a good maneuver for roll damping?
+
+Yes, but it is not the cleanest first test.
+
+The Moose Test / ISO 3888-2 is a closed-loop severe lane-change obstacle-avoidance test, so it naturally excites roll through rapid left-right lateral acceleration. The current ISO 3888-2:2025 page describes it as a closed-loop severe lane-change track for subjectively determining obstacle-avoidance performance and a specific part of vehicle dynamics/road-holding ability.
+
+For pure roll damping identification, however, an open-loop steering test is cleaner. ISO 7401:2011 is specifically about open-loop lateral transient response test methods for road vehicles.
+
+So my corrected ranking is:
+
+Best for identifying C_phi:
+    1. sine steer / step steer / sine-with-dwell at fixed speed
+    2. constant-speed slalom
+    3. Moose Test / double lane change
+
+Best for validating fitted C_phi:
+    Moose Test
+
+Best for minimum-time vehicle-dynamics study:
+    Moose Test corridor with fitted C_phi already fixed
+3. Double-check of your uploaded Moose Test code
+
+Your uploaded file currently contains two scripts concatenated together:
+
+Part 1: straight + repeated circle track
+Part 2: ISO 3888-2-style Moose Test corridor + smooth reference path
+
+This is not a good MATLAB file structure, because after the first script’s local function, you start another script section. In MATLAB, local functions in a script should come after the script code. So for serious use, the Moose Test part should be separated into its own standalone file.
+
+The Moose Test part itself is conceptually suitable for simulation. It uses:
+
+track.L1 = 12.0;
+track.L2 = 13.5;
+track.L3 = 11.0;
+track.L4 = 12.5;
+track.L5 = 12.0;
+track.laneOffset = 1.0;
+
+and for vehicleWidth = 1.85, it gives:
+
+b1 = 2.285 m
+b3 = 2.850 m
+b5 = 3.000 m
+total corridor length = 61 m
+
+The smooth reference path is generated with a quintic smoothstep, so it is suitable as a numerically smooth reference for OCP testing.
+
+But I would change three things before using it for roll damping identification:
+
+1. Split the Moose Test into its own standalone MATLAB file.
+2. Add a pre-entry straight section.
+3. Add a post-exit straight section.
+
+The current 61 m maneuver is too short to observe enough roll settling after the final steering reversal.
+
+Recommended extension:
+
+L_pre  = 30;   % [m]
+L_post = 50;   % [m]
+
+Then the full path becomes:
+
+30 m pre-entry straight
+→ 61 m Moose Test corridor
+→ 50 m post-exit straight
+
+The post-exit straight is especially important because the roll decay after the final lane change is very useful for fitting damping.
+
+4. Initial condition I recommend
+
+For the OCP or simulation using this track, do not start from rest. Start from a steady straight-line condition before the Moose Test.
+
+For your simplified vehicle model, I recommend:
+
+vx0       = V_entry;
+vy0       = 0;
+yawRate0  = 0;
+
+phi0      = 0;
+phiDot0   = 0;
+
+theta0    = 0;
+thetaDot0 = 0;
+
+delta0    = 0;
+
+If your pitch and roll are defined relative to static equilibrium, then phi0 = 0 and theta0 = 0 are correct.
+
+For first testing:
+
+V_entry = 16.67;   % 60 km/h
+
+Then sweep:
+
+40 km/h
+50 km/h
+60 km/h
+70 km/h
+80 km/h
+
+Do not identify the roll damping from only one speed. A single fitted C_phi may work at one speed but fail at another.
+
+5. Controls: what should you use?
+
+My corrected answer is:
+
+For fitting roll damping
+
+Use:
+
+steering only
+fixed speed or tightly constrained speed
+no free throttle
+no free brake
+
+In other words:
+
+control = steering angle or steering rate
+vx ≈ V_entry
+
+This gives a clean lateral transient excitation.
+
+If you have measured real-car speed, use:
+
+vx(t) ≈ vx_measured(t)
+
+If you have measured steering, even better:
+
+delta(t) ≈ delta_measured(t)
+
+Then fit the roll damping from the roll response.
+
+For simulating a real Moose Test style maneuver
+
+Use:
+
+initial speed fixed
+throttle = 0 during the maneuver
+brake = 0 during the maneuver
+steering only
+
+This is closer to the idea of entering the maneuver at a target speed and then steering through the cones.
+
+For minimum-time performance study
+
+Use:
+
+throttle + brake + steering
+
+but only after the roll damping parameter has already been fitted.
+
+For minimum-time OCP, the problem becomes:
+
+Given fitted C_phi:
+    find fastest path/speed/control through the corridor
+
+That is a performance study, not a clean damping-identification problem.
+
+6. The biggest correction to my previous answer
+
+Previously I said “use steering only, or fixed-speed steering, for the damping-identification problem.” That is still correct.
+
+But I should make the stronger statement:
+
+Do not fit C_phi from a free minimum-time OCP.
+
+A free minimum-time OCP may reduce roll excitation by changing speed, path, or braking. Then the fitted damping parameter may compensate for the wrong input rather than represent the real car’s roll behavior.
+
+7. Final recommendation
+
+For your purpose, I recommend this workflow:
+
+Step 1:
+    Split your Moose Test code into a standalone script.
+
+Step 2:
+    Add 30 m pre-entry straight and 50 m post-exit straight.
+
+Step 3:
+    Run fixed-speed Moose Test simulations first.
+
+Step 4:
+    Use steering-only or measured steering input.
+
+Step 5:
+    Fit effective C_phi against real measured phi(t), phi_dot(t), and possibly a_y(t).
+
+Step 6:
+    Validate the same C_phi at another speed.
+
+Step 7:
+    Only after that, use throttle + brake + steering in a minimum-time OCP.
+
+So the corrected recommendation is:
+
+Moose Test: yes, suitable for effective roll damping identification.
+Your current Moose Test code: suitable as a starting geometry, but should be separated and extended with pre/post straight sections.
+Initial condition: steady straight-line entry at fixed speed, zero roll/pitch rates, zero steering.
+Controls for fitting: steering only, preferably fixed speed or measured speed.
+Controls for minimum-time study: throttle + brake + steering, but only after damping is fitted.
