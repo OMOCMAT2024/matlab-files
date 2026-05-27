@@ -1,0 +1,26 @@
+MATLAB commands:
+
+cd path/to/vehicle14_matlab_casadi_package_outer_models_v4_flatroad_checked
+
+Default: user-editable outer model on 3D ribbon road
+run_vehicle14_matlab_casadi_demo
+
+Outer model on flat road
+run_vehicle14_matlab_casadi_demo('outer','flat')
+run_vehicle14_matlab_casadi_demo('simulate','outer','flat')
+
+Outer model on 3D ribbon road
+run_vehicle14_matlab_casadi_demo('outer','ribbon')
+run_vehicle14_matlab_casadi_demo('simulate','outer','ribbon')
+
+Original built-in demo model on flat/3D road
+run_vehicle14_matlab_casadi_demo('original','flat')
+run_vehicle14_matlab_casadi_demo('original','ribbon')
+
+Plots/render after the matching solution exists:
+run_vehicle14_matlab_casadi_demo('plots-only','outer','flat')
+run_vehicle14_matlab_casadi_demo('render-only','outer','flat')
+run_vehicle14_matlab_casadi_demo('plots-only','outer','ribbon')
+run_vehicle14_matlab_casadi_demo('render-only','outer','ribbon')
+run_vehicle14_matlab_casadi_demo('plots-only','original','flat')
+run_vehicle14_matlab_casadi_demo('render-only','original','flat')
