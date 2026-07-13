@@ -1,0 +1,82 @@
+STATIC RE-AUDIT — DISTANCE-BASED DRS + KERS PACKAGE
+===================================================
+
+Core-code result
+----------------
+PASS: no core-code correction was required after the second audit.
+PASS: my_params.m, my_oc.m, my_model.m and my_nlp.m are byte-for-byte
+      identical to the preceding DRS+KERS package.
+PASS: my_plot.m is byte-for-byte identical to the user's original upload.
+
+Data checks
+-----------
+PASS: required CSV columns are present.
+PASS: official-length-scaled distance is finite and strictly increasing.
+PASS: DRS and KERS source states are binary.
+PASS: seven DRS-on intervals are detected.
+PASS: four KERS-on intervals are detected.
+PASS: the automatically selected final KERS interval is a subset of KERS-on.
+
+Detected KERS intervals, official-length-scaled source distance
+---------------------------------------------------------------
+KERS 1: 0.000000 m to 7.097049 m
+KERS 2: 1033.127565 m to 1151.749670 m
+KERS 3: 2713.100455 m to 2813.473006 m
+KERS 4: 3414.694445 m to 3630.647508 m
+Final KERS interval: interval 4
+
+DRS checks
+----------
+PASS: DRS off maps to Cd = 0.9.
+PASS: DRS on maps to Cd = 0.8.
+PASS: drag uses f_drag = 0.5*rho*Cd*A*ux^2.
+PASS: existing lift/downforce remains unchanged.
+
+KERS power-selector truth table with packaged defaults
+------------------------------------------------------
+kers_on = 0, kers_last_on = 0 -> added power = 0 kW
+kers_on = 1, kers_last_on = 0 -> added power = 60 kW
+kers_on = 1, kers_last_on = 1 -> added power = 60 kW
+
+The previous audit text's reference to 73.5 kW was an audit-document error;
+no 73.5 kW value exists in the packaged core code. It is corrected here.
+
+CasADi/NLP wiring
+-----------------
+PASS: my_model.m defines pv = [kappa; Cd; kers_on; kers_last_on].
+PASS: collocation pv has dimensions 4 x (N*d).
+PASS: knot pv has dimensions 4 x (N+1).
+PASS: mapped dynamics receives pv_col.
+PASS: collocation and knot path constraints receive the four-row pv.
+PASS: all output/postprocessing functions receive a four-entry pv vector.
+PASS: the existing rear-drivetrain power constraint uses
+      base power + distance-based KERS addition.
+PASS: final KERS added power is independently tunable.
+
+FIA power and energy distinction
+--------------------------------
+The 2012 rules specified a maximum KERS power of 60 kW and a separate
+400 kJ-per-lap released-energy limit, measured at the connection to the rear
+wheel drivetrain.
+
+The extracted KERS durations total 6.9805 s. Full saturation at 60 kW over
+all extracted windows would permit 418.83 kJ. The OCP does not force full
+saturation and therefore does not necessarily use this energy, but it also
+does not explicitly enforce the 400 kJ integral limit. This omission is
+intentional to preserve the user's requested minimal scope.
+
+Unchanged-scope checks
+----------------------
+PASS: no states, controls or algebraic variables were added.
+PASS: no bounds, scaling, initial guesses or objective terms were changed.
+PASS: no tyre, suspension, load-transfer or torque-distribution equations
+      were changed.
+PASS: no collocation degree, periodic boundary condition or IPOPT setting
+      was changed.
+PASS: plotting code is unchanged.
+
+Execution limitation
+--------------------
+MATLAB, CasADi and IPOPT are unavailable in this environment, so the full
+numerical NLP solve could not be executed. The source data, formulas,
+dimensions, call sites, diffs, checksums and archive integrity were audited.

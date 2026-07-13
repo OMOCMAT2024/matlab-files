@@ -1,0 +1,287 @@
+=== my_params.m ===
+--- /mnt/data/my_params(56).m	2026-07-13 14:19:52.686455414 +0000
++++ /mnt/data/DRS_KERS_distance_based_package_reaudited/my_params.m	2026-07-13 15:21:19.907324588 +0000
+@@ -600,10 +600,17 @@
+ % Cd = 0.8;
+ Cl = (-1) * 3.0; % negative means downforce in this sign convention
+ 
++% Store the aerodynamic quantities needed by the distance-varying Cd model.
++veh.rho = rho;
++veh.A = A;
++veh.Cd_nominal = Cd;
++veh.Cd_drs = 0.8;
++
+ % veh.hcop = veh.hc;
+ % veh.acop = veh.lf;
+ 
+-veh.drag_coeff = rho*Cd*A;
++% Retained as the nominal (DRS-off) drag coefficient for compatibility.
++veh.drag_coeff = veh.rho*veh.Cd_nominal*veh.A;
+ veh.lift_coeff = rho*Cl*A;
+ veh.aero_front_frac = veh.lr/veh.l; % fraction of vertical aero force on front axle
+ 
+@@ -762,6 +769,13 @@
+ % veh.power_motor_max = 575 * 10^3; % [Watts]
+ veh.power_motor_max = 600 * 10^3; % [Watts]
+ 
++% Distance-based 2012 KERS power addition. The FIA maximum was 60 kW.
++% The final Rosberg KERS interval is separate so it can be tuned without
++% changing the earlier KERS intervals. Values above 60 kW are an empirical
++% calibration choice rather than a regulation-faithful 2012 KERS setting.
++veh.kers_power_add = 60 * 10^3;      % [Watts], KERS intervals 1 to end-1
++veh.kers_power_add_last = 60 * 10^3; % [Watts], final KERS interval (tunable)
++
+ % veh.tc_motor = 0.05; % [second]
+ 
+ % inputs
+
+=== my_oc.m ===
+--- /mnt/data/my_oc(24).m	2026-07-13 14:19:52.599620208 +0000
++++ /mnt/data/DRS_KERS_distance_based_package_reaudited/my_oc.m	2026-07-13 15:21:19.922042935 +0000
+@@ -5,6 +5,11 @@
+ veh = my_params();
+ track_name = char("Catalunya");
+ 
++% Rosberg DRS/KERS data used to build the distance-varying schedules.
++% Change this path only if the CSV is stored in another folder.
++drs_data_file = fullfile(pwd, ...
++    'rosberg_2012_china_distance_speed_drs_kers_1m(4).csv');
++
+ % Boundary-condition mode for the lap optimization.
+ % false: retain the existing non-periodic start/end boundary conditions.
+ % true:  impose Xk(:,end) = Xk(:,1) for all vehicle states.
+@@ -63,8 +68,82 @@
+ 
+ 
+ 
+-track_interp_table = array2table([track_interp_here(:, 1:4) track_interp_here(:, 5) track_interp_here(:, 6) s_interp_here]);
+-track_interp_table.Properties.VariableNames = {'x','y','wr','wl','Theta','curvature', 's'};
++% Build piecewise-constant Cd and KERS schedules from Rosberg's measured
++% DRS/KERS states. The source distance is scaled to the optimization track
++% length so the transitions remain aligned when the two lap-length
++% representations differ slightly.
++if ~isfile(drs_data_file)
++    error('my_oc:MissingDRSFile', ...
++        'DRS/KERS data file not found: %s', drs_data_file);
++end
++
++drs_data = readtable(drs_data_file);
++required_drs_variables = ...
++    {'distance_official_length_scaled_m','drs_on','kers_active'};
++if ~all(ismember(required_drs_variables, drs_data.Properties.VariableNames))
++    error('my_oc:InvalidDRSFile', ...
++        ['DRS/KERS CSV must contain distance_official_length_scaled_m, ' ...
++         'drs_on and kers_active.']);
++end
++
++drs_distance_m = drs_data.distance_official_length_scaled_m;
++drs_on_source = drs_data.drs_on;
++kers_on_source = drs_data.kers_active;
++
++if any(~isfinite(drs_distance_m)) || any(diff(drs_distance_m) <= 0)
++    error('my_oc:InvalidDRSDistance', ...
++        'DRS/KERS distance data must be finite and strictly increasing.');
++end
++if any(~ismember(drs_on_source, [0 1]))
++    error('my_oc:InvalidDRSState', 'DRS state data must contain only 0 or 1.');
++end
++if any(~ismember(kers_on_source, [0 1]))
++    error('my_oc:InvalidKERSState', ...
++        'KERS state data must contain only 0 or 1.');
++end
++if s_interp_here(end) <= 0 || drs_distance_m(end) <= 0
++    error('my_oc:InvalidLapLength', ...
++        'Track and DRS/KERS lap lengths must be positive.');
++end
++
++% Identify the final contiguous KERS-on interval directly from the binary
++% source data. This avoids hard-coding its distance limits.
++kers_start_idx = find(diff([0; double(kers_on_source(:))]) == 1);
++kers_end_idx = find(diff([double(kers_on_source(:)); 0]) == -1);
++if isempty(kers_start_idx) || numel(kers_start_idx) ~= numel(kers_end_idx)
++    error('my_oc:InvalidKERSIntervals', ...
++        'Could not identify valid contiguous KERS-on intervals.');
++end
++kers_last_on_source = zeros(size(kers_on_source));
++kers_last_on_source(kers_start_idx(end):kers_end_idx(end)) = 1;
++
++drs_query_distance_m = ...
++    s_interp_here ./ s_interp_here(end) .* drs_distance_m(end);
++drs_on_track = interp1(drs_distance_m, double(drs_on_source), ...
++    drs_query_distance_m, 'previous', 'extrap');
++kers_on_track = interp1(drs_distance_m, double(kers_on_source), ...
++    drs_query_distance_m, 'previous', 'extrap');
++kers_last_on_track = interp1(drs_distance_m, ...
++    double(kers_last_on_source), drs_query_distance_m, ...
++    'previous', 'extrap');
++
++% Restore exact binary KERS schedules after interpolation.
++kers_on_track = double(kers_on_track >= 0.5);
++kers_last_on_track = double(kers_last_on_track >= 0.5);
++if any(kers_last_on_track > kers_on_track)
++    error('my_oc:InvalidLastKERSInterval', ...
++        'The final KERS interval must be a subset of the KERS-on schedule.');
++end
++
++Cd_track = veh.Cd_nominal * ones(size(s_interp_here));
++Cd_track(drs_on_track >= 0.5) = veh.Cd_drs;
++
++track_interp_table = array2table([track_interp_here(:, 1:4) ...
++    track_interp_here(:, 5) track_interp_here(:, 6) s_interp_here ...
++    Cd_track kers_on_track kers_last_on_track]);
++track_interp_table.Properties.VariableNames = ...
++    {'x','y','wr','wl','Theta','curvature','s','Cd', ...
++     'kers_on','kers_last_on'};
+ 
+ if ~exist(fullfile(pwd,'my_smooth'), 'dir')
+ mkdir('my_smooth')
+
+=== my_model.m ===
+--- /mnt/data/my_model(45).m	2026-07-13 14:19:52.743862336 +0000
++++ /mnt/data/DRS_KERS_distance_based_package_reaudited/my_model.m	2026-07-13 15:21:19.932964195 +0000
+@@ -131,8 +131,11 @@
+ %Symbolic variables that are not decision variables of the NLP - defined as such because their value changes (it is like a variable value parameter)
+ 
+ kappa = SX.sym('kappa'); % kappa > 0 for left turns
++Cd = SX.sym('Cd');           % distance-varying aerodynamic drag coefficient
++kers_on = SX.sym('kers_on'); % distance-varying KERS on/off state
++kers_last_on = SX.sym('kers_last_on'); % final KERS interval indicator
+ 
+-pv = kappa; % collect variable parameters
++pv = [kappa; Cd; kers_on; kers_last_on]; % collect variable parameters
+ 
+ %% Vehicle model - equations
+ %Calculate variables of the system other than the states and inputs
+@@ -145,7 +148,7 @@
+ % vy = V*sinb;
+ 
+ % Aerodynamics. With this sign convention, f_lift < 0 is downforce.
+-f_drag = 0.5 * veh.drag_coeff * ux.^2;
++f_drag = 0.5 * veh.rho * Cd * veh.A * ux.^2;
+ f_lift = 0.5 * veh.lift_coeff * ux.^2;
+ Za1 = veh.aero_front_frac * f_lift;
+ Za2 = (1 - veh.aero_front_frac) * f_lift;
+
+=== my_nlp.m ===
+--- /mnt/data/my_nlp(34).m	2026-07-13 14:19:52.722285625 +0000
++++ /mnt/data/DRS_KERS_distance_based_package_reaudited/my_nlp.m	2026-07-13 15:21:19.948802536 +0000
+@@ -28,7 +28,13 @@
+ 
+ pw_drive_rear_normalized = Tt * (omega_rl+omega_rr)/2 / (Tt_s*omega_s);
+ 
+-pw_drive_rear_ub_normalized = veh.power_motor_max / (Tt_s*omega_s); % [Watts] / [Watts]
++% Available power is increased only in Rosberg's distance-based KERS-on
++% intervals. The final interval uses its independently tunable parameter.
++kers_power_add_available = veh.kers_power_add * kers_on + ...
++    (veh.kers_power_add_last - veh.kers_power_add) * kers_last_on;
++power_motor_available = veh.power_motor_max + kers_power_add_available;
++pw_drive_rear_ub_normalized = ...
++    power_motor_available / (Tt_s*omega_s); % [Watts] / [Watts]
+ 
+ BrTh = Tt_n*Tb_n;
+ 
+@@ -86,6 +92,17 @@
+ 
+ kappa_col = kappa_interp(step_col);
+ 
++% Cd and KERS flags are piecewise constant in distance because DRS/KERS
++% are on/off states. Keep the left-knot value throughout each finite
++% element to avoid non-physical intermediate values at transitions.
++Cd_knot = reshape(track.Cd, 1, N+1);
++Cd_col = reshape(repmat(Cd_knot(1:N), d, 1), 1, N*d);
++kers_on_knot = reshape(track.kers_on, 1, N+1);
++kers_on_col = reshape(repmat(kers_on_knot(1:N), d, 1), 1, N*d);
++kers_last_on_knot = reshape(track.kers_last_on, 1, N+1);
++kers_last_on_col = reshape( ...
++    repmat(kers_last_on_knot(1:N), d, 1), 1, N*d);
++
+ wr_interp = interpolant('wr_interp','linear',{step},track.wr);
+ 
+ wr_knot = wr_interp(step);
+@@ -594,6 +611,7 @@
+ h_col = reshape(repmat(h, d, 1), 1, N*d);
+ B_col = repmat(B.', 1, N);
+ kappa_col_vec = reshape(kappa_col, 1, N*d);
++pv_col = [kappa_col_vec; Cd_col; kers_on_col; kers_last_on_col];
+ 
+ % Collocation polynomial values stacked interval-by-interval:
+ % column k of Xpoly_stack is [Xk(:,k); Xkj(:,d*(k-1)+1); ...; Xkj(:,d*k)].
+@@ -610,8 +628,8 @@
+ % Dynamics and path constraints at all collocation points.
+ f_dyn_col = f_dyn.map(N*d);
+ h_eq_col = h_eq.map(N*d);
+-[dXkj_col, Qkj_col] = f_dyn_col(Xkj, Uk_col, Zkj, kappa_col_vec);
+-h_col_path = h_eq_col(Xkj, Uk_col, Zkj, kappa_col_vec);
++[dXkj_col, Qkj_col] = f_dyn_col(Xkj, Uk_col, Zkj, pv_col);
++h_col_path = h_eq_col(Xkj, Uk_col, Zkj, pv_col);
+ 
+ % Collocation residuals arranged by finite element/stage.
+ % Each column k is exactly the same interval-k residual block as the old
+@@ -668,8 +686,10 @@
+ %% Path constraints at knot points
+ 
+ kappa_knot_vec = reshape(kappa_knot, 1, N+1);
++pv_knot = [kappa_knot_vec; Cd_knot; ...
++    kers_on_knot; kers_last_on_knot];
+ h_eq_knot = h_eq.map(N+1);
+-h_knot_path = h_eq_knot(Xk, Uk, Zk, kappa_knot_vec);
++h_knot_path = h_eq_knot(Xk, Uk, Zk, pv_knot);
+ ghk = {h_knot_path(:)};
+ 
+ %% Rate of input constraints, Betts Eq. (4.261)-(4.262) style
+@@ -915,6 +935,15 @@
+ 
+ sol.load = zeros(N+1,11);
+ 
++% Distance-based DRS/KERS quantities used at the knot points.
++sol.Cd = full(Cd_knot);
++sol.kers_on = full(kers_on_knot);
++sol.kers_last_on = full(kers_last_on_knot);
++sol.kers_power_add_W = veh.kers_power_add * sol.kers_on + ...
++    (veh.kers_power_add_last - veh.kers_power_add) * sol.kers_last_on;
++sol.power_motor_available_W = ...
++    veh.power_motor_max + sol.kers_power_add_W;
++
+ for k = 1:N+1
+ 
+ xk_scaled = sol.x_opt(:,k)./x_s;
+@@ -923,25 +952,26 @@
+ 
+ zk_scaled = sol.z_opt(:,k)./z_s;
+ 
+-kap = kappa_knot(k);
++pv_here = [kappa_knot(k); Cd_knot(k); ...
++    kers_on_knot(k); kers_last_on_knot(k)];
+ 
+-sol.aero(k,:) = full(f_aero(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.aero(k,:) = full(f_aero(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+-sol.tyre(k,:) = full(f_tyre(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.tyre(k,:) = full(f_tyre(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+-sol.slip(k,:) = full(f_slip(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.slip(k,:) = full(f_slip(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+-sol.acc(k,:) = full(f_acc(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.acc(k,:) = full(f_acc(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+-sol.torque(k,:) = full(f_torque(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.torque(k,:) = full(f_torque(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+-sol.mu(k,:) = full(f_mu(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.mu(k,:) = full(f_mu(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+-sol.pwr(k,:) = full(f_pwr(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.pwr(k,:) = full(f_pwr(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+-sol.xdot(k,:) = (full(f_xdot(xk_scaled,uk_scaled,zk_scaled,kap)) .* x_s)';
++sol.xdot(k,:) = (full(f_xdot(xk_scaled,uk_scaled,zk_scaled,pv_here)) .* x_s)';
+ 
+-sol.load(k,:) = full(f_load(xk_scaled,uk_scaled,zk_scaled,kap))';
++sol.load(k,:) = full(f_load(xk_scaled,uk_scaled,zk_scaled,pv_here))';
+ 
+ end
+ 
+
+=== my_plot.m ===
+IDENTICAL TO ORIGINAL

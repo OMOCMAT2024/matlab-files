@@ -1,0 +1,11 @@
+RECHECK RESULT
+==============
+
+The DRS and KERS core implementation is internally consistent and requires
+no core-code correction.
+
+One inconsistency was found in the preceding package's STATIC_AUDIT.txt: it
+reported a 73.5 kW final-interval test value even though my_params.m contained
+60 kW. This was documentation only; the MATLAB optimization code always used
+the value configured in veh.kers_power_add_last. The re-audited package
+corrects the report and adds an explicit 400 kJ modelling-scope diagnostic.
